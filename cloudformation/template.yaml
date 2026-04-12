@@ -1,0 +1,344 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Docker Guestbook — single EC2 instance running all 4 containers via Docker Compose.
+  Includes VPC, public subnet, security group, Elastic IP, IAM instance profile,
+  and Secrets Manager secrets. Free-tier eligible on t2.micro.
+
+# ─────────────────────────────────────────────
+# Parameters
+# ─────────────────────────────────────────────
+Parameters:
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Password for the PostgreSQL database (min 8 characters)
+
+  GrafanaPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Password for the Grafana admin user (min 8 characters)
+
+  DBUser:
+    Type: String
+    Default: postgres
+    Description: PostgreSQL username
+
+  DBName:
+    Type: String
+    Default: guestbook
+    Description: PostgreSQL database name
+
+  GrafanaUser:
+    Type: String
+    Default: admin
+    Description: Grafana admin username
+
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+      - t3.small
+    Description: EC2 instance type (t2.micro is free-tier eligible)
+
+  # Automatically resolves to the latest Amazon Linux 2023 AMI for the region
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+# ─────────────────────────────────────────────
+# Resources
+# ─────────────────────────────────────────────
+Resources:
+
+  # ── Secrets Manager ─────────────────────────
+  SecretDB:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: guestbook/db
+      Description: PostgreSQL password for the guestbook database
+      SecretString: !Ref DBPassword
+
+  SecretGrafana:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: guestbook/grafana
+      Description: Grafana admin password for the guestbook dashboard
+      SecretString: !Ref GrafanaPassword
+
+  # ── VPC & Networking ─────────────────────────
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: guestbook-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: guestbook-igw
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      # Pick the first AZ in the region automatically
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: guestbook-public-subnet
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: guestbook-rt
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref RouteTable
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: guestbook-eip
+
+  EIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
+      InstanceId: !Ref EC2Instance
+
+  # ── Security Group ────────────────────────────
+  SGGuestbook:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP to guestbook app and Grafana; no SSH (use SSM)
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP — guestbook app
+        - IpProtocol: tcp
+          FromPort: 3001
+          ToPort: 3001
+          CidrIp: 0.0.0.0/0
+          Description: Grafana dashboard
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound (Docker image pulls, package updates)
+      Tags:
+        - Key: Name
+          Value: guestbook-sg
+
+  # ── IAM ──────────────────────────────────────
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: guestbook-ec2-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Enables SSM Session Manager — no SSH key needed
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadGuestbookSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                # Wildcard suffix needed: Secrets Manager appends a 6-char random suffix to ARNs
+                Resource:
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:guestbook/db*"
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:guestbook/grafana*"
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: guestbook-ec2-profile
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # ── EC2 Instance ──────────────────────────────
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - SecretDB
+      - SecretGrafana
+      - PublicRoute
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref SGGuestbook
+      # No KeyName — access via SSM Session Manager only
+      Tags:
+        - Key: Name
+          Value: guestbook-server
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            set -euo pipefail
+            exec > >(tee /var/log/guestbook-init.log | logger -t guestbook-init -s 2>/dev/console) 2>&1
+
+            echo "=== Starting guestbook bootstrap ==="
+
+            # ── 1. System updates and Docker ──────────────
+            dnf update -y
+            dnf install -y docker git
+            systemctl enable --now docker
+            usermod -aG docker ec2-user
+
+            # Install Docker Compose v2 plugin
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            curl -fsSL \
+              "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+              -o /usr/local/lib/docker/cli-plugins/docker-compose
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+            echo "Docker version: $(docker --version)"
+            echo "Docker Compose version: $(docker compose version)"
+
+            # ── 2. Fetch secrets from Secrets Manager ─────
+            # ${AWS::Region} is a CloudFormation substitution; ${!DB_PASSWORD} escapes the bash var
+            # so CloudFormation doesn't try to resolve it as a CFN reference.
+            REGION="${AWS::Region}"
+
+            DB_PASSWORD=$(aws secretsmanager get-secret-value \
+              --secret-id guestbook/db \
+              --query SecretString \
+              --output text \
+              --region "$REGION")
+
+            GRAFANA_PASSWORD=$(aws secretsmanager get-secret-value \
+              --secret-id guestbook/grafana \
+              --query SecretString \
+              --output text \
+              --region "$REGION")
+
+            # ── 3. Clone repo ─────────────────────────────
+            mkdir -p /opt/guestbook
+            cd /opt/guestbook
+
+            # NOTE: Push your repo to GitHub before deploying this stack.
+            # The repo must be public, or provide credentials for a private repo.
+            git clone https://github.com/Erics38/docker-guestbook.git .
+
+            # ── 4. Write .env ─────────────────────────────
+            # CFN !Sub injects ${DBUser}, ${DBName}, ${GrafanaUser}, ${ElasticIP} at deploy time.
+            # Bash vars use ${!DB_PASSWORD} syntax to prevent CloudFormation from interpreting them.
+            cat > /opt/guestbook/.env <<ENVEOF
+DB_USER=${DBUser}
+DB_PASSWORD=${!DB_PASSWORD}
+DB_NAME=${DBName}
+GRAFANA_USER=${GrafanaUser}
+GRAFANA_PASSWORD=${!GRAFANA_PASSWORD}
+CORS_ORIGIN=http://${ElasticIP.PublicIp}
+ENVEOF
+
+            # ── 5. Start containers ───────────────────────
+            docker compose up -d --build
+            echo "=== Containers started ==="
+
+            # ── 6. Enable auto-restart on reboot ─────────
+            # Write a systemd service so docker compose restarts after instance reboot
+            cat > /etc/systemd/system/guestbook.service <<SVCEOF
+[Unit]
+Description=Guestbook Docker Compose application
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/guestbook
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+            systemctl enable guestbook.service
+            echo "=== Bootstrap complete ==="
+
+# ─────────────────────────────────────────────
+# Outputs
+# ─────────────────────────────────────────────
+Outputs:
+  GuestbookURL:
+    Description: Public URL for the guestbook application
+    Value: !Sub "http://${ElasticIP.PublicIp}/"
+
+  GrafanaURL:
+    Description: Public URL for the Grafana monitoring dashboard
+    Value: !Sub "http://${ElasticIP.PublicIp}:3001/"
+
+  ElasticIPAddress:
+    Description: Static public IP address of the EC2 instance
+    Value: !GetAtt ElasticIP.PublicIp
+
+  InstanceId:
+    Description: EC2 instance ID — use with 'aws ssm start-session --target <value>' to connect
+    Value: !Ref EC2Instance
+
+  SSMConnectCommand:
+    Description: Command to open a shell session on the instance (no SSH key needed)
+    Value: !Sub "aws ssm start-session --target ${EC2Instance} --region ${AWS::Region}"
+
+  DeployCommand:
+    Description: Deploy command for reference
+    Value: !Sub >-
+      aws cloudformation deploy
+      --template-file cloudformation/template.yaml
+      --stack-name guestbook
+      --capabilities CAPABILITY_NAMED_IAM
+      --parameter-overrides DBPassword=<your-db-password> GrafanaPassword=<your-grafana-password>
+      --region ${AWS::Region}
