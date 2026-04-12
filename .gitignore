@@ -1,0 +1,36 @@
+# Security - Never commit these
+.env
+*.env
+.env.local
+.env.production
+.env.staging
+aws-config.js
+secrets.json
+config/secrets.js
+
+# AWS and sensitive data
+*.pem
+*.key
+*-key.json
+aws-credentials.json
+
+# Node modules
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker
+.docker/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log

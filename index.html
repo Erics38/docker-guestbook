@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My First Docker Website</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Hello, Docker World!</h1>
+        <p>This website is running in a Docker container!</p>
+        <div class="info">
+            <h2>What you've accomplished:</h2>
+            <ul>
+                <li>Created a static HTML website</li>
+                <li>Built a Docker image</li>
+                <li>Run a container with nginx</li>
+                <li>Mapped ports to access your site</li>
+            </ul>
+        </div>
+        
+        <div class="guestbook">
+            <h2>Sign Our Guestbook!</h2>
+            
+            <!-- Guestbook Form -->
+            <form id="guestbook-form">
+                <input type="text" id="name" placeholder="Your name" required maxlength="100">
+                <textarea id="message" placeholder="Your message" required maxlength="1000"></textarea>
+                <button type="submit">Sign Guestbook</button>
+            </form>
+            
+            <!-- Display Messages -->
+            <div id="messages">
+                <h3>Recent Messages:</h3>
+                <div id="message-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // XSS Protection - Escape HTML characters
+    function escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
+
+    // Input validation
+    function validateInput(name, message) {
+        if (!name || !message) {
+            alert('Please fill in both name and message fields.');
+            return false;
+        }
+        if (name.length > 100) {
+            alert('Name must be less than 100 characters.');
+            return false;
+        }
+        if (message.length > 1000) {
+            alert('Message must be less than 1000 characters.');
+            return false;
+        }
+        return true;
+    }
+
+    // Load messages on page load
+    document.addEventListener('DOMContentLoaded', loadMessages);
+
+    // Handle form submission
+    document.getElementById('guestbook-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const name = document.getElementById('name').value.trim();
+        const message = document.getElementById('message').value.trim();
+        
+        // Validate input before sending
+        if (!validateInput(name, message)) {
+            return;
+        }
+        
+        try {
+            await fetch('/api/guestbook', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, message })
+            });
+            
+            // Clear form and reload messages
+            document.getElementById('guestbook-form').reset();
+            loadMessages();
+        } catch (error) {
+            console.error('Error:', error);
+        }
+    });
+
+    // Load and display messages
+    async function loadMessages() {
+        try {
+            const response = await fetch('/api/guestbook');
+            const messages = await response.json();
+            
+            const messageList = document.getElementById('message-list');
+            messageList.innerHTML = messages.map(msg => `
+                <div class="message">
+                    <strong>${escapeHtml(msg.name)}</strong>: ${escapeHtml(msg.message)}
+                    <small>(${new Date(msg.created_at).toLocaleString()})</small>
+                </div>
+            `).join('');
+        } catch (error) {
+            console.error('Error loading messages:', error);
+        }
+    }
+    </script>
+</body>
+</html>
