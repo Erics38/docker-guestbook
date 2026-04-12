@@ -27,6 +27,7 @@
             <form id="guestbook-form">
                 <input type="text" id="name" placeholder="Your name" required maxlength="100">
                 <textarea id="message" placeholder="Your message" required maxlength="1000"></textarea>
+                <div id="form-error" style="color: red; margin-top: 8px; display: none;"></div>
                 <button type="submit">Sign Guestbook</button>
             </form>
             
@@ -51,18 +52,30 @@
         return text.replace(/[&<>"']/g, function(m) { return map[m]; });
     }
 
+    function showError(msg) {
+        const el = document.getElementById('form-error');
+        el.textContent = msg;
+        el.style.display = 'block';
+    }
+
+    function clearError() {
+        const el = document.getElementById('form-error');
+        el.textContent = '';
+        el.style.display = 'none';
+    }
+
     // Input validation
     function validateInput(name, message) {
         if (!name || !message) {
-            alert('Please fill in both name and message fields.');
+            showError('Please fill in both name and message fields.');
             return false;
         }
         if (name.length > 100) {
-            alert('Name must be less than 100 characters.');
+            showError('Name must be less than 100 characters.');
             return false;
         }
         if (message.length > 1000) {
-            alert('Message must be less than 1000 characters.');
+            showError('Message must be less than 1000 characters.');
             return false;
         }
         return true;
@@ -78,23 +91,32 @@
         const name = document.getElementById('name').value.trim();
         const message = document.getElementById('message').value.trim();
         
+        clearError();
+
         // Validate input before sending
         if (!validateInput(name, message)) {
             return;
         }
-        
+
         try {
-            await fetch('/api/guestbook', {
+            const response = await fetch('/api/guestbook', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, message })
             });
-            
+
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                showError(data.error || 'Failed to submit. Please try again.');
+                return;
+            }
+
             // Clear form and reload messages
             document.getElementById('guestbook-form').reset();
             loadMessages();
         } catch (error) {
             console.error('Error:', error);
+            showError('Network error. Please check your connection and try again.');
         }
     });
 

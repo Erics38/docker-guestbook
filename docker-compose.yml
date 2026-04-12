@@ -49,5 +49,27 @@ services:
       - backend
     restart: unless-stopped
 
+  # Grafana for monitoring (dashboard at http://localhost:3001)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: guestbook-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - db
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  grafana_data:

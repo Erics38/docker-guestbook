@@ -1,0 +1,94 @@
+{
+  "title": "Guestbook",
+  "uid": "guestbook",
+  "version": 1,
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": { "from": "now-1y", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Entries Over Time",
+      "type": "graph",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 10 },
+      "datasource": { "type": "postgres", "uid": "PCC52D03280B7034C" },
+      "lines": true,
+      "linewidth": 2,
+      "fill": 1,
+      "bars": false,
+      "points": false,
+      "smooth": true,
+      "nullPointMode": "null",
+      "yaxes": [
+        { "label": "Entries", "show": true, "min": 0 },
+        { "show": false }
+      ],
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "PCC52D03280B7034C" },
+          "rawSql": "SELECT created_at AS time, COUNT(*) OVER (ORDER BY created_at) AS \"Total entries\" FROM guestbook WHERE $__timeFilter(created_at) ORDER BY created_at",
+          "format": "time_series",
+          "rawQuery": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Total Entries",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 10, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "PCC52D03280B7034C" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "blue" },
+          "displayName": "Total entries"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "PCC52D03280B7034C" },
+          "rawSql": "SELECT NOW() AS time, COUNT(*) AS \"Total entries\" FROM guestbook",
+          "format": "time_series",
+          "rawQuery": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Entries (Last 24h)",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 10, "w": 6, "h": 4 },
+      "datasource": { "type": "postgres", "uid": "PCC52D03280B7034C" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "green" },
+          "displayName": "Last 24h"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "PCC52D03280B7034C" },
+          "rawSql": "SELECT NOW() AS time, COUNT(*) AS \"Last 24h\" FROM guestbook WHERE created_at > NOW() - INTERVAL '24 hours'",
+          "format": "time_series",
+          "rawQuery": true,
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "templating": { "list": [] }
+}
