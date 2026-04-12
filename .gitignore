@@ -8,6 +8,9 @@ aws-config.js
 secrets.json
 config/secrets.js
 
+# CloudFormation parameters (contains passwords — never commit)
+cloudformation/parameters.json
+
 # AWS and sensitive data
 *.pem
 *.key

@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Docker Guestbook — single EC2 instance running all 4 containers via Docker Compose.
-  Includes VPC, public subnet, security group, Elastic IP, IAM instance profile,
-  and Secrets Manager secrets. Free-tier eligible on t2.micro.
+  Includes VPC, public subnet, security group, Elastic IP, and IAM instance profile.
+  Free-tier eligible on t2.micro. Passwords supplied via parameters.json (gitignored).
 
 # ─────────────────────────────────────────────
 # Parameters
@@ -53,21 +53,6 @@ Parameters:
 # Resources
 # ─────────────────────────────────────────────
 Resources:
-
-  # ── Secrets Manager ─────────────────────────
-  SecretDB:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: guestbook/db
-      Description: PostgreSQL password for the guestbook database
-      SecretString: !Ref DBPassword
-
-  SecretGrafana:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: guestbook/grafana
-      Description: Grafana admin password for the guestbook dashboard
-      SecretString: !Ref GrafanaPassword
 
   # ── VPC & Networking ─────────────────────────
   VPC:
@@ -182,17 +167,6 @@ Resources:
       ManagedPolicyArns:
         # Enables SSM Session Manager — no SSH key needed
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-      Policies:
-        - PolicyName: ReadGuestbookSecrets
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action: secretsmanager:GetSecretValue
-                # Wildcard suffix needed: Secrets Manager appends a 6-char random suffix to ARNs
-                Resource:
-                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:guestbook/db*"
-                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:guestbook/grafana*"
 
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -204,10 +178,7 @@ Resources:
   # ── EC2 Instance ──────────────────────────────
   EC2Instance:
     Type: AWS::EC2::Instance
-    DependsOn:
-      - SecretDB
-      - SecretGrafana
-      - PublicRoute
+    DependsOn: PublicRoute
     Properties:
       ImageId: !Ref LatestAmiId
       InstanceType: !Ref InstanceType
@@ -244,49 +215,29 @@ Resources:
             echo "Docker version: $(docker --version)"
             echo "Docker Compose version: $(docker compose version)"
 
-            # ── 2. Fetch secrets from Secrets Manager ─────
-            # ${AWS::Region} is a CloudFormation substitution; ${!DB_PASSWORD} escapes the bash var
-            # so CloudFormation doesn't try to resolve it as a CFN reference.
-            REGION="${AWS::Region}"
-
-            DB_PASSWORD=$(aws secretsmanager get-secret-value \
-              --secret-id guestbook/db \
-              --query SecretString \
-              --output text \
-              --region "$REGION")
-
-            GRAFANA_PASSWORD=$(aws secretsmanager get-secret-value \
-              --secret-id guestbook/grafana \
-              --query SecretString \
-              --output text \
-              --region "$REGION")
-
-            # ── 3. Clone repo ─────────────────────────────
+            # ── 2. Clone repo ─────────────────────────────
             mkdir -p /opt/guestbook
             cd /opt/guestbook
 
-            # NOTE: Push your repo to GitHub before deploying this stack.
-            # The repo must be public, or provide credentials for a private repo.
             git clone https://github.com/Erics38/docker-guestbook.git .
 
-            # ── 4. Write .env ─────────────────────────────
-            # CFN !Sub injects ${DBUser}, ${DBName}, ${GrafanaUser}, ${ElasticIP} at deploy time.
-            # Bash vars use ${!DB_PASSWORD} syntax to prevent CloudFormation from interpreting them.
+            # ── 3. Write .env ─────────────────────────────
+            # All values are injected by CloudFormation !Sub at deploy time.
+            # NoEcho parameters (DBPassword, GrafanaPassword) are never logged by CloudFormation.
             cat > /opt/guestbook/.env <<ENVEOF
 DB_USER=${DBUser}
-DB_PASSWORD=${!DB_PASSWORD}
+DB_PASSWORD=${DBPassword}
 DB_NAME=${DBName}
 GRAFANA_USER=${GrafanaUser}
-GRAFANA_PASSWORD=${!GRAFANA_PASSWORD}
+GRAFANA_PASSWORD=${GrafanaPassword}
 CORS_ORIGIN=http://${ElasticIP.PublicIp}
 ENVEOF
 
-            # ── 5. Start containers ───────────────────────
+            # ── 4. Start containers ───────────────────────
             docker compose up -d --build
             echo "=== Containers started ==="
 
-            # ── 6. Enable auto-restart on reboot ─────────
-            # Write a systemd service so docker compose restarts after instance reboot
+            # ── 5. Enable auto-restart on reboot ─────────
             cat > /etc/systemd/system/guestbook.service <<SVCEOF
 [Unit]
 Description=Guestbook Docker Compose application
@@ -332,13 +283,3 @@ Outputs:
   SSMConnectCommand:
     Description: Command to open a shell session on the instance (no SSH key needed)
     Value: !Sub "aws ssm start-session --target ${EC2Instance} --region ${AWS::Region}"
-
-  DeployCommand:
-    Description: Deploy command for reference
-    Value: !Sub >-
-      aws cloudformation deploy
-      --template-file cloudformation/template.yaml
-      --stack-name guestbook
-      --capabilities CAPABILITY_NAMED_IAM
-      --parameter-overrides DBPassword=<your-db-password> GrafanaPassword=<your-grafana-password>
-      --region ${AWS::Region}

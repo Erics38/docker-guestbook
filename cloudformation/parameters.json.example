@@ -1,0 +1,4 @@
+[
+  { "ParameterKey": "DBPassword",      "ParameterValue": "changeme123" },
+  { "ParameterKey": "GrafanaPassword", "ParameterValue": "changeme123" }
+]
