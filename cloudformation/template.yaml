@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Docker Guestbook — single EC2 instance running all 4 containers via Docker Compose.
+  Docker Guestbook - single EC2 instance running all 4 containers via Docker Compose.
   Includes VPC, public subnet, security group, Elastic IP, and IAM instance profile.
   Free-tier eligible on t2.micro. Passwords supplied via parameters.json (gitignored).
 
@@ -138,7 +138,7 @@ Resources:
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
-          Description: HTTP — guestbook app
+          Description: HTTP - guestbook app
         - IpProtocol: tcp
           FromPort: 3001
           ToPort: 3001
@@ -205,15 +205,19 @@ Resources:
             systemctl enable --now docker
             usermod -aG docker ec2-user
 
-            # Install Docker Compose v2 plugin
+            # Install Docker Compose and Buildx plugins
             mkdir -p /usr/local/lib/docker/cli-plugins
             curl -fsSL \
               "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
               -o /usr/local/lib/docker/cli-plugins/docker-compose
             chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+            BUILDX_URL=$(curl -s https://api.github.com/repos/docker/buildx/releases/latest | grep browser_download_url | grep 'linux-amd64"' | head -1 | cut -d'"' -f4)
+            curl -fsSL "$BUILDX_URL" -o /usr/local/lib/docker/cli-plugins/docker-buildx
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
 
             echo "Docker version: $(docker --version)"
             echo "Docker Compose version: $(docker compose version)"
+            echo "Docker Buildx version: $(docker buildx version)"
 
             # ── 2. Clone repo ─────────────────────────────
             mkdir -p /opt/guestbook
@@ -224,38 +228,31 @@ Resources:
             # ── 3. Write .env ─────────────────────────────
             # All values are injected by CloudFormation !Sub at deploy time.
             # NoEcho parameters (DBPassword, GrafanaPassword) are never logged by CloudFormation.
-            cat > /opt/guestbook/.env <<ENVEOF
-DB_USER=${DBUser}
-DB_PASSWORD=${DBPassword}
-DB_NAME=${DBName}
-GRAFANA_USER=${GrafanaUser}
-GRAFANA_PASSWORD=${GrafanaPassword}
-CORS_ORIGIN=http://${ElasticIP.PublicIp}
-ENVEOF
+            printf 'DB_USER=${DBUser}\nDB_PASSWORD=${DBPassword}\nDB_NAME=${DBName}\nGRAFANA_USER=${GrafanaUser}\nGRAFANA_PASSWORD=${GrafanaPassword}\nCORS_ORIGIN=http://${ElasticIP.PublicIp}\n' > /opt/guestbook/.env
 
             # ── 4. Start containers ───────────────────────
             docker compose up -d --build
             echo "=== Containers started ==="
 
             # ── 5. Enable auto-restart on reboot ─────────
-            cat > /etc/systemd/system/guestbook.service <<SVCEOF
-[Unit]
-Description=Guestbook Docker Compose application
-Requires=docker.service
-After=docker.service network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=/opt/guestbook
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
-TimeoutStartSec=300
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
+            printf '%s\n' \
+              '[Unit]' \
+              'Description=Guestbook Docker Compose application' \
+              'Requires=docker.service' \
+              'After=docker.service network-online.target' \
+              'Wants=network-online.target' \
+              '' \
+              '[Service]' \
+              'Type=oneshot' \
+              'RemainAfterExit=yes' \
+              'WorkingDirectory=/opt/guestbook' \
+              'ExecStart=/usr/bin/docker compose up -d' \
+              'ExecStop=/usr/bin/docker compose down' \
+              'TimeoutStartSec=300' \
+              '' \
+              '[Install]' \
+              'WantedBy=multi-user.target' \
+              > /etc/systemd/system/guestbook.service
 
             systemctl enable guestbook.service
             echo "=== Bootstrap complete ==="
@@ -277,7 +274,7 @@ Outputs:
     Value: !GetAtt ElasticIP.PublicIp
 
   InstanceId:
-    Description: EC2 instance ID — use with 'aws ssm start-session --target <value>' to connect
+    Description: EC2 instance ID - use with 'aws ssm start-session --target <value>' to connect
     Value: !Ref EC2Instance
 
   SSMConnectCommand:
